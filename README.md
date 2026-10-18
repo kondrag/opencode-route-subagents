@@ -1,0 +1,118 @@
+# opencode-route-subagents
+
+An [OpenCode](https://opencode.ai) V2 plugin that rewrites `general` subagent
+dispatches to specialized agents — code review, plan review, or one of three
+implementer tiers — and pins the configured model on every subagent dispatch
+so per-agent model tiers actually hold.
+
+## What it does
+
+The plugin hooks `execute.before` on the `subagent` tool (OpenCode V2) and
+does two things:
+
+### 1. Routing `general` dispatches
+
+A `general` dispatch is reclassified from its **description** alone:
+
+| Description matches | Routed to |
+| --- | --- |
+| `review` + plan/spec/design-doc words | `plan-reviewer` |
+| `review` (anything else) | `code-reviewer` |
+| implement verb + cheap cues (`cheapest`, `mechanical`, `transcription`, `single-file`) | `implementer-cheap` |
+| implement verb + deep cues (`deepest`, `most capable`, `architecture`, `design judgment`, `broad codebase`) | `implementer-deep` |
+| implement verb (`implement`, `build`, `write`, `create`, `refactor`, `scaffold`, `develop`) | `implementer` |
+| no review/implement verb | stays `general` |
+
+Review wins over implement verbs, so "review the implementation plan" routes
+to `plan-reviewer`, not an implementer. Tier words are evaluated cheap → deep
+→ standard; with no usable cue the standard `implementer` floor applies.
+
+Implementer prompts from the superpowers
+[subagent-driven-development](https://github.com/obra/superpowers) flow carry
+a `model:` tier directive. A direct agent name in the directive
+(`model: implementer-deep`) wins, then tier words — from the directive first,
+then the description. The prompt body is deliberately **not** scanned, so SDD
+template boilerplate (self-review sections, "the plan" references) can't
+pollute classification.
+
+### 2. Pinning per-agent models
+
+OpenCode v2.0.24 does not apply `agent.<name>.model` from `opencode.jsonc` to
+subagent dispatches — children inherit the parent session's model — and
+callers tend to echo that parent model back. The plugin reads the config
+itself (from `../opencode.jsonc` relative to the plugin file, cached by
+mtime, comments and trailing commas tolerated) and sets `input.model`:
+
+- on routed dispatches — the routed agent's configured model, or the override
+  is dropped if that agent has none
+- on direct dispatches of a named agent — the configured model wins over a
+  caller-echoed one
+- dispatches that stay `general`, and agents without a configured model, are
+  untouched
+
+Decisions are logged to stderr with a `[route-subagents]` prefix.
+
+## Install
+
+Clone as a global plugin (OpenCode auto-loads `~/.config/opencode/plugin/`):
+
+```sh
+git clone https://github.com/kondrag/opencode-route-subagents.git \
+  ~/.config/opencode/plugin/route-subagents
+```
+
+The plugin expects these agents to exist, e.g. from a superpowers setup:
+`code-reviewer`, `plan-reviewer`, `implementer`, `implementer-cheap`,
+`implementer-deep`. It reads `../opencode.jsonc` relative to its own
+location, so the layout above — plugin directory next to your global
+`opencode.jsonc` — is what the model-pinning lookup expects. On other hosts
+without the V2 tool domain it fails quietly and does nothing.
+
+## Configuration
+
+Per-agent model tiers in your `opencode.jsonc` (one level up from the plugin
+directory). Example mirroring the tiers the tests assert against:
+
+```jsonc
+{
+  "agent": {
+    "code-reviewer":     { "model": "zai-coding-plan/glm-5.3#max" },
+    "plan-reviewer":     { "model": "zai-coding-plan/glm-5.3#max" },
+    "implementer":       { "model": "zai-coding-plan/glm-5.3-flash#high" },
+    "implementer-cheap": { "model": "zai-coding-plan/glm-5.3-flash" },
+    "implementer-deep":  { "model": "zai-coding-plan/glm-5.3#max" },
+  },
+}
+```
+
+Any `providerID/modelID[#variant]` string works. Set `ROUTE_SUBAGENTS_CONFIG`
+to point the plugin at a different config file; the default stays
+`../opencode.jsonc` relative to the plugin.
+
+## Development
+
+```
+route-subagents.js        Plugin entrypoint (V2 contract: default export { id, setup })
+route-logic.mjs           Pure routing logic, unit-testable without a plugin context
+route-subagents.test.mjs  node:test coverage for logic and hook wiring
+```
+
+Run the suite:
+
+```sh
+npm test
+```
+
+Requires Node ≥ 20.11 (`import.meta.dirname`). The suite is hermetic: it
+writes a temporary config fixture and points `ROUTE_SUBAGENTS_CONFIG` at it,
+so no external `opencode.jsonc` is needed.
+
+## Requirements
+
+- OpenCode v2 (hooks the `subagent` tool; V1's `task` / `subagent_type`
+  shape is not handled)
+- Node ≥ 20.11
+
+## License
+
+[MIT](LICENSE)
