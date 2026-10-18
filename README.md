@@ -40,8 +40,10 @@ pollute classification.
 OpenCode v2 does not apply `agents.<name>.model` from `opencode.jsonc` to
 subagent dispatches — children inherit the parent session's model — and
 callers tend to echo that parent model back. The plugin reads the config
-itself (from `../opencode.jsonc` relative to the plugin file, cached by
-mtime, comments and trailing commas tolerated) and sets `input.model`:
+itself — first existing of `ROUTE_SUBAGENTS_CONFIG`, `../opencode.jsonc`
+relative to the plugin file, then `~/.config/opencode/opencode.jsonc`
+(cached by path + mtime, comments and trailing commas tolerated) — and sets
+`input.model`:
 
 - on routed dispatches — the routed agent's configured model, or the override
   is dropped if that agent has none
@@ -70,10 +72,23 @@ git clone https://github.com/kondrag/opencode-route-subagents.git \
 
 The plugin expects these agents to exist, e.g. from a superpowers setup:
 `code-reviewer`, `plan-reviewer`, `implementer`, `implementer-cheap`,
-`implementer-deep`. It reads `../opencode.jsonc` relative to its own
-location, so the layout above — plugin directory next to your global
+`implementer-deep`. It finds your `opencode.jsonc` via the search order
+described above, so the layout above — plugin directory next to your global
 `opencode.jsonc` — is what the model-pinning lookup expects. On other hosts
 without the V2 tool domain it fails quietly and does nothing.
+
+Alternatively, symlink just the runtime files into the plugins directory your
+config references (e.g. `~/.config/opencode/plugins/`):
+
+```sh
+ln -s ~/workspace/opencode-route-subagents/route-subagents.js \
+      ~/workspace/opencode-route-subagents/route-logic.mjs \
+      ~/.config/opencode/plugins/
+```
+
+Symlinks work because the config search falls through to
+`~/.config/opencode/opencode.jsonc` when the repo-relative path misses —
+`git pull` in the checkout then updates the deployed plugin directly.
 
 ## Configuration
 
@@ -97,9 +112,11 @@ directory). Example mirroring the tiers the tests assert against:
 Any `providerID/modelID[#variant]` string works, as does the expanded object
 form above. The legacy singular `"agent": { ... }` key is still read as a
 fallback, but OpenCode's normalizer strips `#variant` references and object
-models from it — use the native `agents` key when pinning variants. Set
-`ROUTE_SUBAGENTS_CONFIG` to point the plugin at a different config file; the
-default stays `../opencode.jsonc` relative to the plugin.
+models from it — use the native `agents` key when pinning variants. The
+config path search order is: `ROUTE_SUBAGENTS_CONFIG` env override, then
+`../opencode.jsonc` relative to the plugin file, then
+`$XDG_CONFIG_HOME/opencode/opencode.jsonc` (defaulting to
+`~/.config/opencode/opencode.jsonc`).
 
 ## Development
 

@@ -16,34 +16,74 @@
 // the plain object shape is what the host validates (id + setup).
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { agentModel, route } from "./route-logic.mjs";
 
 // Per-agent model tiers live in opencode.jsonc (`agents.<name>.model`; the
 // legacy singular `agent` key is still read as a fallback — see
-// route-logic.mjs). The
-// host does not apply them to subagent dispatches, so the router reads the
-// config itself and sets `input.model` on routed dispatches. Cached by mtime;
-// re-read when the file changes. Returns {} when unavailable. The path
-// defaults to ../opencode.jsonc relative to this file (the global-config
-// layout) and can be overridden with ROUTE_SUBAGENTS_CONFIG.
-const configPath = process.env.ROUTE_SUBAGENTS_CONFIG
-  || path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "opencode.jsonc");
-let _cfgCache = { mtime: -1, config: {} };
+// route-logic.mjs). The host does not apply them to subagent dispatches, so
+// the router reads the config itself and sets `input.model` on routed
+// dispatches. Config search order — first path that exists wins:
+//   1. ROUTE_SUBAGENTS_CONFIG env override
+//   2. ../opencode.jsonc relative to this file (deployed-copy layout)
+//   3. $XDG_CONFIG_HOME/opencode/opencode.jsonc, else
+//      ~/.config/opencode/opencode.jsonc (global-config layout)
+// (2) breaks when this file is reached through a symlink: Node ESM resolves
+// symlinks, so import.meta.url is the real checkout path. (3) is what keeps
+// symlinked plugin deployments working. Candidates are recomputed on every
+// read, so tests can point the env or XDG vars at fixtures at any time.
+// Exported for coverage.
+export const configCandidates = () =>
+  [
+    process.env.ROUTE_SUBAGENTS_CONFIG,
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "opencode.jsonc"),
+    path.join(
+      process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"),
+      "opencode",
+      "opencode.jsonc",
+    ),
+  ].filter((p) => typeof p === "string" && p.length > 0);
+
+// Comments and trailing commas tolerated. Cached by path + mtime; re-read when
+// either changes. A failed parse caches {} for that path+mtime (retried only
+// after the file actually changes, instead of re-reading and re-logging on
+// every dispatch). Returns {} when no config is found.
+let _cfgCache = { path: null, mtime: -1, config: {} };
+let _missingLogged = false;
 const loadConfig = () => {
-  try {
-    const mtime = fs.statSync(configPath).mtimeMs;
-    if (mtime !== _cfgCache.mtime) {
+  let configPath = null;
+  let mtime = -1;
+  for (const candidate of configCandidates()) {
+    try {
+      mtime = fs.statSync(candidate).mtimeMs;
+      configPath = candidate;
+      break;
+    } catch {}
+  }
+  if (!configPath) {
+    if (!_missingLogged) {
+      console.error(
+        "[route-subagents] no config found, tried:",
+        configCandidates().join(", "),
+      );
+      _missingLogged = true;
+    }
+    return _cfgCache.config;
+  }
+  _missingLogged = false;
+  if (configPath !== _cfgCache.path || mtime !== _cfgCache.mtime) {
+    try {
       const raw = fs.readFileSync(configPath, "utf8")
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/(^|[^:])\/\/[^\n]*/g, "$1")
         .replace(/,(\s*[}\]])/g, "$1");
-      _cfgCache = { mtime, config: JSON.parse(raw) };
+      _cfgCache = { path: configPath, mtime, config: JSON.parse(raw) };
+    } catch (err) {
+      console.error("[route-subagents] config load failed:", err?.message);
+      _cfgCache = { path: configPath, mtime, config: {} };
     }
-  } catch (err) {
-    console.error("[route-subagents] config load failed:", err?.message);
-    _cfgCache = { mtime: -1, config: {} };
   }
   return _cfgCache.config;
 };

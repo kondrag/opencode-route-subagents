@@ -12,11 +12,12 @@ const logicURL = pathToFileURL(
   path.join(import.meta.dirname, "route-logic.mjs")
 ).href;
 
-// Hermetic config: in production the plugin reads ../opencode.jsonc relative
-// to itself (the global-config layout), but the checkout rarely sits there.
-// Point ROUTE_SUBAGENTS_CONFIG at a fixture so the suite passes anywhere; the
-// values mirror the pinned-model assertions below. Must be set before the
-// plugin module is imported — configPath is computed at load time.
+// Hermetic config: in production the plugin searches for opencode.jsonc
+// (env override, then relative to itself, then the global config dir), but
+// the checkout rarely sits in one of those layouts with a real config. Point
+// ROUTE_SUBAGENTS_CONFIG at a fixture so the suite passes anywhere; the
+// values mirror the pinned-model assertions below. Candidates are recomputed
+// on every config read, so tests may mutate (and restore) env at any point.
 //
 // Uses the native V2 `agents` key, matching production config. The expanded
 // {providerID, model, variant} object form is what OpenCode's config
@@ -35,7 +36,7 @@ fs.writeFileSync(fixturePath, JSON.stringify({
   },
 }, null, 2));
 
-const { default: plugin } = await import(pluginURL);
+const { default: plugin, configCandidates } = await import(pluginURL);
 const { route, resolveImplementerTier, agentModel } = await import(logicURL);
 
 // Excerpt of the superpowers SDD implementer prompt template. Real dispatches
@@ -177,6 +178,60 @@ test("agentModel: undefined for missing agent, entry, or unusable model", () => 
     agentModel("explore", { agents: { explore: { model: { providerID: "p" } } } }),
     undefined,
   );
+});
+
+// --- configCandidates(): config search order --------------------------------
+// Each test mutates env and restores it in finally; candidates are recomputed
+// per call, so no reload or re-import is needed.
+
+function withEnv(mutations, fn) {
+  const saved = new Map(
+    Object.entries(mutations).map(([k]) => [k, process.env[k]]),
+  );
+  for (const [k, v] of Object.entries(mutations)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+test("configCandidates: env override wins, then repo-relative, then global", () => {
+  withEnv({ ROUTE_SUBAGENTS_CONFIG: "/tmp/override.jsonc", XDG_CONFIG_HOME: undefined }, () => {
+    assert.deepEqual(configCandidates(), [
+      "/tmp/override.jsonc",
+      path.join(import.meta.dirname, "..", "opencode.jsonc"),
+      path.join(os.homedir(), ".config", "opencode", "opencode.jsonc"),
+    ]);
+  });
+});
+
+test("configCandidates: without env or XDG, falls through to ~/.config", () => {
+  withEnv({ ROUTE_SUBAGENTS_CONFIG: undefined, XDG_CONFIG_HOME: undefined }, () => {
+    assert.deepEqual(configCandidates(), [
+      path.join(import.meta.dirname, "..", "opencode.jsonc"),
+      path.join(os.homedir(), ".config", "opencode", "opencode.jsonc"),
+    ]);
+  });
+});
+
+test("configCandidates: XDG_CONFIG_HOME redirects the global fallback", () => {
+  withEnv({ ROUTE_SUBAGENTS_CONFIG: undefined, XDG_CONFIG_HOME: "/tmp/xdg" }, () => {
+    const candidates = configCandidates();
+    assert.equal(candidates.at(-1), path.join("/tmp/xdg", "opencode", "opencode.jsonc"));
+  });
+});
+
+test("configCandidates: empty-string env override is ignored", () => {
+  withEnv({ ROUTE_SUBAGENTS_CONFIG: "", XDG_CONFIG_HOME: undefined }, () => {
+    assert.notEqual(configCandidates()[0], "");
+  });
 });
 
 // --- plugin hook wiring (V2 event shape) ------------------------------------
