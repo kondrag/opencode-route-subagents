@@ -37,7 +37,7 @@ pollute classification.
 
 ### 2. Pinning per-agent models
 
-OpenCode v2.0.24 does not apply `agent.<name>.model` from `opencode.jsonc` to
+OpenCode v2 does not apply `agents.<name>.model` from `opencode.jsonc` to
 subagent dispatches — children inherit the parent session's model — and
 callers tend to echo that parent model back. The plugin reads the config
 itself (from `../opencode.jsonc` relative to the plugin file, cached by
@@ -51,6 +51,13 @@ mtime, comments and trailing commas tolerated) and sets `input.model`:
   untouched
 
 Decisions are logged to stderr with a `[route-subagents]` prefix.
+
+The model can be a `"providerID/modelID[#variant]"` string or the expanded
+V2 object form (`{ "providerID": ..., "model": ..., "variant": ... }`) that
+OpenCode's config normalizer emits. The native plural `agents` key is read
+first; the legacy singular `agent` key works as a fallback. Prefer the native
+key: OpenCode's normalizer silently drops `#variant` references and object
+models from the legacy key, so variant pinning only survives under `agents`.
 
 ## Install
 
@@ -75,19 +82,24 @@ directory). Example mirroring the tiers the tests assert against:
 
 ```jsonc
 {
-  "agent": {
+  "agents": {
     "code-reviewer":     { "model": "zai-coding-plan/glm-5.3#max" },
     "plan-reviewer":     { "model": "zai-coding-plan/glm-5.3#max" },
     "implementer":       { "model": "zai-coding-plan/glm-5.3-flash#high" },
     "implementer-cheap": { "model": "zai-coding-plan/glm-5.3-flash" },
     "implementer-deep":  { "model": "zai-coding-plan/glm-5.3#max" },
+    // expanded V2 object form also works, with or without a variant
+    "explore": { "model": { "providerID": "unsloth", "model": "Unsloth-Qwen3.8-27B", "variant": "nothink" } },
   },
 }
 ```
 
-Any `providerID/modelID[#variant]` string works. Set `ROUTE_SUBAGENTS_CONFIG`
-to point the plugin at a different config file; the default stays
-`../opencode.jsonc` relative to the plugin.
+Any `providerID/modelID[#variant]` string works, as does the expanded object
+form above. The legacy singular `"agent": { ... }` key is still read as a
+fallback, but OpenCode's normalizer strips `#variant` references and object
+models from it — use the native `agents` key when pinning variants. Set
+`ROUTE_SUBAGENTS_CONFIG` to point the plugin at a different config file; the
+default stays `../opencode.jsonc` relative to the plugin.
 
 ## Development
 

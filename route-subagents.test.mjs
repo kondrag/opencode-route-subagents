@@ -17,15 +17,21 @@ const logicURL = pathToFileURL(
 // Point ROUTE_SUBAGENTS_CONFIG at a fixture so the suite passes anywhere; the
 // values mirror the pinned-model assertions below. Must be set before the
 // plugin module is imported — configPath is computed at load time.
+//
+// Uses the native V2 `agents` key, matching production config. The expanded
+// {providerID, model, variant} object form is what OpenCode's config
+// normalizer emits, so it is exercised end-to-end through the hook (see the
+// explore pinning test below).
 const fixturePath = path.join(os.tmpdir(), "route-subagents.test.opencode.jsonc");
 process.env.ROUTE_SUBAGENTS_CONFIG = fixturePath;
 fs.writeFileSync(fixturePath, JSON.stringify({
-  agent: {
+  agents: {
     "code-reviewer":     { model: "zai-coding-plan/glm-5.3#max" },
     "plan-reviewer":     { model: "zai-coding-plan/glm-5.3#max" },
     "implementer":       { model: "zai-coding-plan/glm-5.3-flash#high" },
     "implementer-cheap": { model: "zai-coding-plan/glm-5.3-flash" },
     "implementer-deep":  { model: "zai-coding-plan/glm-5.3#max" },
+    explore: { model: { providerID: "unsloth", model: "Unsloth-Qwen3.8-27B", variant: "nothink" } },
   },
 }, null, 2));
 
@@ -124,19 +130,53 @@ test("tier: no directive, no tier words -> standard floor", () => {
 
 // --- agentModel(): per-agent model from opencode.jsonc ----------------------
 
-test("agentModel: reads agent.<name>.model from config", () => {
+test("agentModel: reads legacy agent.<name>.model string (fallback)", () => {
   assert.equal(
     agentModel("code-reviewer", { agent: { "code-reviewer": { model: "p/m#v" } } }),
     "p/m#v",
   );
 });
 
-test("agentModel: undefined for missing agent, entry, or non-string model", () => {
+test("agentModel: reads native agents.<name>.model string", () => {
+  assert.equal(
+    agentModel("explore", { agents: { explore: { model: "p/m#nothink" } } }),
+    "p/m#nothink",
+  );
+});
+
+test("agentModel: expanded object form with and without variant", () => {
+  assert.equal(
+    agentModel("explore", {
+      agents: { explore: { model: { providerID: "p", model: "m", variant: "nothink" } } },
+    }),
+    "p/m#nothink",
+  );
+  assert.equal(
+    agentModel("explore", { agents: { explore: { model: { providerID: "p", model: "m" } } } }),
+    "p/m",
+  );
+});
+
+test("agentModel: native agents key wins over legacy agent key", () => {
+  assert.equal(
+    agentModel("explore", {
+      agents: { explore: { model: "p/native#v" } },
+      agent: { explore: { model: "p/legacy" } },
+    }),
+    "p/native#v",
+  );
+});
+
+test("agentModel: undefined for missing agent, entry, or unusable model", () => {
   assert.equal(agentModel("code-reviewer", {}), undefined);
-  assert.equal(agentModel("code-reviewer", { agent: {} }), undefined);
-  assert.equal(agentModel("code-reviewer", { agent: { "code-reviewer": {} } }), undefined);
-  assert.equal(agentModel("code-reviewer", { agent: { "code-reviewer": { model: 5 } } }), undefined);
+  assert.equal(agentModel("code-reviewer", { agents: {} }), undefined);
+  assert.equal(agentModel("code-reviewer", { agents: { "code-reviewer": {} } }), undefined);
+  assert.equal(agentModel("code-reviewer", { agents: { "code-reviewer": { model: 5 } } }), undefined);
   assert.equal(agentModel("code-reviewer", undefined), undefined);
+  assert.equal(
+    agentModel("explore", { agents: { explore: { model: { providerID: "p" } } } }),
+    undefined,
+  );
 });
 
 // --- plugin hook wiring (V2 event shape) ------------------------------------
@@ -173,7 +213,7 @@ test("hook: ignores non-subagent tools", async () => {
   assert.equal(input.agent, "general");
 });
 
-test("hook: ignores non-general agents", async () => {
+test("hook: ignores non-general agents for routing", async () => {
   const hooks = await makePluginHooks();
   const input = { agent: "explore", description: "Implement X" };
   await runHook(hooks, input);
@@ -266,6 +306,14 @@ test("hook: direct implementer dispatch keeps agent, pins configured model", asy
   await runHook(hooks, input);
   assert.equal(input.agent, "implementer");
   assert.equal(input.model, "zai-coding-plan/glm-5.3-flash#high");
+});
+
+test("hook: direct explore dispatch pins model composed from expanded object form", async () => {
+  const hooks = await makePluginHooks();
+  const input = { agent: "explore", description: "Find all call sites of loadConfig" };
+  await runHook(hooks, input);
+  assert.equal(input.agent, "explore");
+  assert.equal(input.model, "unsloth/Unsloth-Qwen3.8-27B#nothink");
 });
 
 test("hook: direct dispatch overwrites caller-echoed parent model", async () => {

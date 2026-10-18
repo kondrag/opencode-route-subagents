@@ -5,7 +5,7 @@
 // dispatch description and the SDD `model:` directive in the prompt. Routing
 // rules live in route-logic.mjs; coverage lives in route-subagents.test.mjs.
 //
-// Also pins the configured `agent.<name>.model` onto DIRECT dispatches of a
+// Also pins the configured `agents.<name>.model` onto DIRECT dispatches of a
 // named agent: the host does not apply that config to subagent dispatches
 // (children inherit the parent session's model, observed on v2.0.24), so
 // without this, per-agent tiers only held for the routed `general` path.
@@ -20,7 +20,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { agentModel, route } from "./route-logic.mjs";
 
-// Per-agent model tiers live in opencode.jsonc (`agent.<name>.model`). The
+// Per-agent model tiers live in opencode.jsonc (`agents.<name>.model`; the
+// legacy singular `agent` key is still read as a fallback — see
+// route-logic.mjs). The
 // host does not apply them to subagent dispatches, so the router reads the
 // config itself and sets `input.model` on routed dispatches. Cached by mtime;
 // re-read when the file changes. Returns {} when unavailable. The path
@@ -77,7 +79,7 @@ export default {
       }
 
       // Direct dispatch of a named agent (`code-reviewer`, `implementer`, ...).
-      // The host does not apply `agent.<name>.model` to subagent dispatches —
+      // The host does not apply `agents.<name>.model` to subagent dispatches —
       // children inherit the parent session's model — so pin the configured
       // model here too, variant included. A caller-echoed model loses to the
       // config, same as on the routed path. Agents without a configured model

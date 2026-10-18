@@ -1,6 +1,6 @@
 {
   "name": "opencode-route-subagents",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenCode V2 plugin that routes `general` subagent dispatches to specialized agents and pins per-agent model tiers.",
   "type": "module",
   "license": "MIT",
