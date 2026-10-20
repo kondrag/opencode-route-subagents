@@ -6,9 +6,11 @@
 // rules live in route-logic.mjs; coverage lives in route-subagents.test.mjs.
 //
 // Also pins the configured `agents.<name>.model` onto DIRECT dispatches of a
-// named agent: the host does not apply that config to subagent dispatches
-// (children inherit the parent session's model, observed on v2.0.24), so
-// without this, per-agent tiers only held for the routed `general` path.
+// named agent. The host applies the configured model to subagent dispatches
+// (V2 docs: "A subagent uses its configured model, or inherits the parent
+// session's model when none is configured"), but callers tend to echo the
+// parent session's model in the tool-level `model` parameter. Pinning here
+// guarantees the per-agent tier wins over a stale caller-echoed value.
 //
 // V2 contract: default export { id, setup } — see
 // https://opencode.ai/v2/docs/build/plugins/migrate-v1 . No @opencode/plugin
@@ -105,9 +107,9 @@ export default {
         const target = route({ description: input.description, prompt: input.prompt });
         if (target) {
           input.agent = target;
-          // Callers tend to echo the parent session's model here, which defeats
-          // the per-agent model tiers. Pin the routed agent's configured model;
-          // with no configured model, drop the override so nothing stale sticks.
+          // Pin the routed agent's configured model so it wins over any
+          // caller-echoed parent model. With no configured model, drop the
+          // override so the host falls back to the parent session's model.
           const model = agentModel(target, loadConfig());
           if (model) input.model = model;
           else delete input.model;
@@ -119,11 +121,9 @@ export default {
       }
 
       // Direct dispatch of a named agent (`code-reviewer`, `implementer`, ...).
-      // The host does not apply `agents.<name>.model` to subagent dispatches —
-      // children inherit the parent session's model — so pin the configured
-      // model here too, variant included. A caller-echoed model loses to the
-      // config, same as on the routed path. Agents without a configured model
-      // dispatch unchanged.
+      // Pin the configured model (variant included) so it wins over any
+      // caller-echoed parent model in the tool-level `model` parameter.
+      // Agents without a configured model dispatch unchanged.
       const model = agentModel(input.agent, loadConfig());
       if (model) {
         input.model = model;

@@ -37,13 +37,12 @@ pollute classification.
 
 ### 2. Pinning per-agent models
 
-OpenCode v2 does not apply `agents.<name>.model` from `opencode.jsonc` to
-subagent dispatches — children inherit the parent session's model — and
-callers tend to echo that parent model back. The plugin reads the config
+Callers tend to echo the parent session's model in the tool-level `model`
+parameter, which can defeat per-agent model tiers. The plugin reads the config
 itself — first existing of `ROUTE_SUBAGENTS_CONFIG`, `../opencode.jsonc`
 relative to the plugin file, then `~/.config/opencode/opencode.jsonc`
 (cached by path + mtime, comments and trailing commas tolerated) — and sets
-`input.model`:
+`input.model` so the configured tier wins:
 
 - on routed dispatches — the routed agent's configured model, or the override
   is dropped if that agent has none

@@ -27,12 +27,13 @@ const modelDirective = (prompt) => {
   return m ? m[1] : "";
 };
 
-// Resolve the model for a routed agent. OpenCode v2.0.24 subagent children
-// inherit the parent session's model; the `agents.<name>.model` entry in
-// opencode.jsonc is not applied to subagent dispatches. To honor the per-agent
-// model tiers, the router sets `input.model` explicitly from that config.
-// Reads both the native `agents` key and the legacy `agent` key. The model may
-// be a "provider/model#variant" string or the expanded V2 object form.
+// Resolve the model for a routed agent. The host applies `agents.<name>.model`
+// to subagent dispatches (V2 docs: "A subagent uses its configured model, or
+// inherits the parent session's model when none is configured"), but callers
+// may echo a stale parent model in the tool-level `model` parameter. The router
+// sets `input.model` explicitly from the config to guarantee the per-agent tier
+// wins. Reads both the native `agents` key and the legacy `agent` key. The model
+// may be a "provider/model#variant" string or the expanded V2 object form.
 // Returns undefined when the config has no model for the agent.
 export const agentModel = (target, config) => {
   const entry = config?.agents?.[target] ?? config?.agent?.[target];
